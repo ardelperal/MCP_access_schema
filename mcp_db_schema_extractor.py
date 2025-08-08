@@ -30,13 +30,27 @@ except ImportError:
     print("Por favor, instálala usando: pip install pypiwin32")
     exit()
 
+# Diccionario de traducción de los tipos de datos de ADO a texto legible
+# para ser usado en la salida Markdown.
+# Los valores son constantes de ADO.DataTypeEnum.
+ADO_DATA_TYPES = {
+    0: "Empty", 2: "SmallInt", 3: "Integer", 4: "Single", 5: "Double",
+    6: "Currency", 7: "Date", 8: "String (OLE)", 11: "Boolean", 13: "Variant",
+    17: "TinyInt", 20: "BigInt", 64: "FileTime", 72: "GUID", 128: "Binary",
+    129: "Text (Ansi)", 130: "Text (Unicode)", 131: "Decimal", 132: "Numeric",
+    133: "Date", 134: "Time", 135: "DateTime", 200: "Text", 201: "Text (Long)",
+    202: "Text", 203: "Text (Long)", 204: "Binary (Long)", 205: "Stream"
+}
 
-# === Funciones de Extracción de Esquema (Tomadas del Canvas anterior) ===
+# === Funciones de Extracción de Esquema ===
 
 def get_database_schema(db_path, password):
     """
-    Se conecta a una base de datos de Access y extrae su esquema, incluyendo columnas,
-    iterando tabla por tabla. Este método utiliza ADO (ActiveX Data Objects).
+    Se conecta a una base de datos de Access y extrae su esquema, incluyendo columnas y
+    su tipo de dato. Este método utiliza ADO (ActiveX Data Objects).
+    
+    Ahora también incluye tablas vinculadas, pero excluye las tablas de sistema
+    cuyo nombre comienza con "MSys".
 
     Args:
         db_path (str): La ruta completa al archivo .accdb.
@@ -44,7 +58,7 @@ def get_database_schema(db_path, password):
 
     Returns:
         tuple: Un diccionario con el esquema y un booleano de éxito.
-               El esquema es {nombre_tabla: [nombre_columna_1, nombre_columna_2, ...]}.
+               El esquema es {nombre_tabla: [(nombre_columna, tipo_dato_id), ...]}.
     """
     if not os.path.exists(db_path):
         print(f"Error: El archivo de base de datos no se encontró en '{db_path}'.")
@@ -64,7 +78,7 @@ def get_database_schema(db_path, password):
         db_schema = {}
         adSchemaTables = 20
 
-        # Obtener una lista de tablas de usuario
+        # Obtener una lista de tablas
         tables_rs = conn.OpenSchema(adSchemaTables)
 
         table_names = []
@@ -72,13 +86,13 @@ def get_database_schema(db_path, password):
             table_name = tables_rs.Fields("TABLE_NAME").Value
             table_type = tables_rs.Fields("TABLE_TYPE").Value
             
-            # Solo procesar tablas de usuario
-            if table_type == "TABLE":
+            # Procesar tablas de usuario y vinculadas, excluyendo tablas de sistema
+            if table_type in ("TABLE", "LINK") and not table_name.startswith("MSys"):
                 table_names.append(table_name)
             
             tables_rs.MoveNext()
 
-        # Recorrer cada tabla para obtener sus campos
+        # Recorrer cada tabla para obtener sus campos y tipos de dato
         for table_name in table_names:
             columns = []
             # Abrir un Recordset para la tabla, de forma que se puedan leer sus Fields
@@ -86,7 +100,8 @@ def get_database_schema(db_path, password):
             recordset.Open(f"SELECT * FROM `{table_name}`", conn)
             
             for field in recordset.Fields:
-                columns.append(field.Name)
+                # Almacenar el nombre y el tipo de dato como una tupla
+                columns.append((field.Name, field.Type))
             
             db_schema[table_name] = columns
             recordset.Close()
@@ -131,7 +146,7 @@ def get_relationships_from_adox(db_path: str, password: str):
         if cat.Tables.Count > 0:
             for table in cat.Tables:
                 # Se obtienen las claves (Key) de la tabla, que pueden ser primarias o foráneas
-                if table.Keys.Count > 0:
+                if table.Keys.Count > 0 and not table.Name.startswith("MSys"):
                     for key in table.Keys:
                         if key.Type == AD_KEY_FOREIGN and key.RelatedTable:
                             # Se detecta una clave foránea, lo que indica una relación
@@ -178,10 +193,12 @@ def create_markdown_output(schema, relationships):
     markdown_content += "## Estructura de Tablas\n\n"
     for table, columns in sorted(schema.items()):
         markdown_content += f"### Tabla: `{table}`\n"
-        markdown_content += "| Nombre de Columna |\n"
-        markdown_content += "|-------------------|\n"
-        for column in sorted(columns):
-            markdown_content += f"| `{column}` |\n"
+        markdown_content += "| Nombre de Columna | Tipo de Dato |\n"
+        markdown_content += "|-------------------|--------------|\n"
+        for column_name, column_type in sorted(columns):
+            # Obtener el nombre del tipo de dato de nuestro diccionario de mapeo
+            data_type_str = ADO_DATA_TYPES.get(column_type, "Desconocido")
+            markdown_content += f"| `{column_name}` | `{data_type_str}` |\n"
         markdown_content += "\n"
     
     markdown_content += "## Relaciones entre Tablas\n\n"
