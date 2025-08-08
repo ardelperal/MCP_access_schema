@@ -109,7 +109,7 @@ def get_relationships_from_adox(db_path: str, password: str):
         password (str): La contraseña de la base de datos.
 
     Returns:
-        list: Una lista de cadenas de texto que describen las relaciones.
+        list: Una lista de tuplas que describen las relaciones, incluyendo las columnas.
     """
     if not os.path.exists(db_path):
         return []
@@ -137,7 +137,23 @@ def get_relationships_from_adox(db_path: str, password: str):
                             # Se detecta una clave foránea, lo que indica una relación
                             foreign_table = table.Name
                             primary_table = key.RelatedTable
-                            relaciones.append((primary_table, foreign_table))
+                            
+                            # Recorrer las columnas de la clave para obtener los campos de la relación
+                            for col_idx in range(key.Columns.Count):
+                                try:
+                                    foreign_column = key.Columns[col_idx].Name
+                                    # Comprobar si RelatedColumn es un objeto o una cadena de texto
+                                    related_column_obj = key.Columns[col_idx].RelatedColumn
+                                    if isinstance(related_column_obj, str):
+                                        primary_column = related_column_obj
+                                    else:
+                                        primary_column = related_column_obj.Name
+                                    relaciones.append((primary_table, foreign_table, primary_column, foreign_column))
+                                except AttributeError as e:
+                                    # En caso de que haya un error con los objetos COM,
+                                    # se añade la relación sin los nombres de las columnas
+                                    print(f"Advertencia: No se pudieron obtener los campos de la relación entre '{foreign_table}' y '{primary_table}'. Detalles: {e}")
+                                    relaciones.append((primary_table, foreign_table, 'N/A', 'N/A'))
         else:
             print("No se encontraron relaciones en la base de datos.")
 
@@ -171,8 +187,8 @@ def create_markdown_output(schema, relationships):
     markdown_content += "## Relaciones entre Tablas\n\n"
     if relationships:
         markdown_content += "Las siguientes relaciones fueron encontradas en el esquema de la base de datos:\n\n"
-        for tabla_principal, tabla_relacionada in relationships:
-            markdown_content += f"- La tabla `{tabla_relacionada}` se relaciona con `{tabla_principal}`.\n"
+        for tabla_principal, tabla_relacionada, col_principal, col_relacionada in relationships:
+            markdown_content += f"- La tabla `{tabla_relacionada}.{col_relacionada}` se relaciona con `{tabla_principal}.{col_principal}`.\n"
     else:
         markdown_content += "No se encontraron relaciones definidas en la base de datos o hubo un error al obtenerlas.\n"
         
